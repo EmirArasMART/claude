@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Şehir Sandbox – Tucson Trafiği</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#0b1020;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none}
+#app{position:fixed;inset:0;animation:fade 1.2s ease-out}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+canvas{display:block}
+.glass{background:rgba(14,18,34,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:16px}
+#menu{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.panel{padding:28px 34px;text-align:center;max-width:92vw}
+h1{font-size:clamp(26px,5vw,42px);margin-bottom:10px;background:linear-gradient(90deg,#8fd3ff,#ffd75e);-webkit-background-clip:text;background-clip:text;color:transparent}
+p{opacity:.88;line-height:1.7;font-size:15px}
+button{font:inherit;font-weight:700;color:#10131f;background:linear-gradient(90deg,#8fd3ff,#ffd75e);border:0;border-radius:12px;padding:12px 32px;font-size:18px;margin-top:16px;cursor:pointer}
+.hidden{display:none!important}
+#hud{position:absolute;left:12px;top:12px;padding:10px 14px;font-size:14px;line-height:1.6}
+#spd{position:absolute;right:14px;bottom:14px;padding:10px 18px;font-size:30px;font-weight:800}
+#spd small{font-size:13px;font-weight:600;opacity:.7}
+#toast{position:absolute;left:50%;bottom:90px;transform:translateX(-50%);padding:10px 18px;font-weight:700;opacity:0;transition:opacity .3s;white-space:nowrap}
+#pad{position:absolute;inset:auto 0 12px 0;pointer-events:none;display:none}
+#pad button{pointer-events:auto;position:absolute;margin:0;width:54px;height:54px;padding:0;font-size:20px;border-radius:14px;opacity:.85}
+@media (pointer:coarse){#pad{display:block}#spd{bottom:150px}}
+</style>
+<script type="importmap">
+{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js"}}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="hud" class="glass hidden"></div>
+  <div id="spd" class="glass hidden">0 <small>km/sa</small></div>
+  <div id="toast" class="glass"></div>
+  <div id="pad">
+    <button data-k="KeyW" style="left:70px;bottom:62px">▲</button><button data-k="KeyA" style="left:10px;bottom:2px">◀</button>
+    <button data-k="KeyS" style="left:70px;bottom:2px">▼</button><button data-k="KeyD" style="left:130px;bottom:2px">▶</button>
+    <button data-k="KeyE" style="right:10px;bottom:2px">E</button><button data-k="KeyH" style="right:70px;bottom:2px">H</button><button data-k="KeyF" style="right:130px;bottom:2px">🔫</button>
+    <button data-k="Space" style="right:10px;bottom:62px">⏹</button><button data-k="KeyT" style="right:70px;bottom:62px">T</button>
+  </div>
+  <div id="menu"><div class="panel glass">
+    <h1>ŞEHİR SANDBOX</h1>
+    <p>Trafikteki her araç bir Hyundai Tucson 2024.<br>WASD: yürü / sür · Shift: koş · Space: el freni<br><b>E</b>: yakındaki araca bin / araçtan in · <b>F</b> / tık: ateş (yayayken)<br><b>H</b>: trafiği durdur / çalıştır · <b>T</b>: tüm hasarı onar · Sürükle: kamera</p>
+    <button id="startBtn">Başla</button>
+  </div></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ================= AYARLAR ================= */
+const CFG = {
+  P: 76, R: 16, N: 4,            // yol aralığı, yol genişliği, şehir yarıçapı (blok sayısı)
+  lane: 2.3, traffic: 36, maxParked: 10,
+  walk: 5, run: 9, acc: 20, brake: 24, max: 240 / 3.6, steer: 1.9,   // max: son hız 240 km/sa (m/sn)
+  fogNear: 90, fogFar: 420
+};
+const { P, N } = CFG, LIM = (N + .5) * P;
+const rnd = (a, b) => a + Math.random() * (b - a), pick = a => a[(Math.random() * a.length) | 0];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v)), $ = id => document.getElementById(id);
+const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
+const std = (color, o = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, ...o });
+
+/* ================= SAHNE ================= */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+$('app').prepend(renderer.domElement);
+const scene = new THREE.Scene();
+(function () {                                    // gökyüzü gradyanı
+  const c = document.createElement('canvas'); c.width = 2; c.height = 256; const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#3a7bd5'); g.addColorStop(.5, '#a8d4f5'); g.addColorStop(.6, '#dbe9f2'); g.addColorStop(1, '#dbe9f2');
+  x.fillStyle = g; x.fillRect(0, 0, 2, 256);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; scene.background = t;
+})();
+scene.fog = new THREE.Fog(0xdbe9f2, CFG.fogNear, CFG.fogFar);
+const camera = new THREE.PerspectiveCamera(65, 1, .1, 700);
+scene.add(new THREE.HemisphereLight(0xcfe6ff, 0x55606a, .9));
+const sun = new THREE.DirectionalLight(0xfff3dd, 1.7);
+sun.castShadow = true; sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50, near: 1, far: 200 });
+scene.add(sun, sun.target);
+function resize() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+
+/* ================= ŞEHİR: zemin, yollar, binalar ================= */
+function groundTex() {                            // tek karolu yol dokusu (kavşak ortada)
+  const S = 512, c = document.createElement('canvas'); c.width = c.height = S; const x = c.getContext('2d');
+  const half = CFG.R / CFG.P * S / 2, a = S / 2 - half, b = S / 2 + half;
+  x.fillStyle = '#2b2e36'; x.fillRect(0, 0, S, S);
+  for (const [x0, x1, w] of [[0, a - 14, a], [b + 14, S, S - b]]) for (const [y0, y1, h] of [[0, a - 14, a], [b + 14, S, S - b]]) {
+    const sx = x0 === 0 ? 0 : b, sy = y0 === 0 ? 0 : b;
+    x.fillStyle = '#9a9ca6'; x.fillRect(sx, sy, w, h);             // kaldırım
+    x.fillStyle = '#565b66'; x.fillRect(x0, y0, x1 - x0, y1 - y0); // blok içi
+  }
+  x.fillStyle = '#e8e8e8';
+  for (let t = 0; t < a; t += 40) { x.fillRect(t, S / 2 - 2, 22, 4); x.fillRect(S / 2 - 2, t, 4, 22); }
+  for (let t = b + 8; t < S; t += 40) { x.fillRect(t, S / 2 - 2, 22, 4); x.fillRect(S / 2 - 2, t, 4, 22); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2 * N + 1, 2 * N + 1);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8; return t;
+}
+const ground = new THREE.Mesh(new THREE.PlaneGeometry((2 * N + 1) * P, (2 * N + 1) * P), new THREE.MeshStandardMaterial({ map: groundTex() }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const outer = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), std(0x4d7048)); outer.rotation.x = -Math.PI / 2; outer.position.y = -.05; scene.add(outer);
+
+function windowTex() {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  x.fillStyle = '#9aa3b2'; x.fillRect(0, 0, 64, 64);
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { x.fillStyle = Math.random() < .3 ? '#ffe9a8' : '#2a3347'; x.fillRect(i * 16 + 3, j * 16 + 4, 10, 8); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const HEIGHTS = [16, 28, 45, 70], BHALF = 13, blocks = new Map();   // bina yüksekliği sınıfları, yarı genişlik
+const place = HEIGHTS.map(() => []);
+for (let i = -N; i < N; i++) for (let j = -N; j < N; j++) {
+  const list = []; blocks.set(i + ',' + j, list);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const cx = (i + .5) * P + sx * 15, cz = (j + .5) * P + sz * 15;
+    if (Math.random() < .8) { const k = pick([0, 0, 1, 1, 2, 3]); place[k].push([cx, cz]); list.push({ x: cx, z: cz }); }
+    else for (let t = 0; t < 2; t++) {                       // park: ağaçlar
+      const tr = new THREE.Group(); tr.position.set(cx + rnd(-8, 8), 0, cz + rnd(-8, 8));
+      const a = new THREE.Mesh(new THREE.CylinderGeometry(.3, .35, 2, 6), std(0x6b4a2f)); a.position.y = 1;
+      const b = new THREE.Mesh(new THREE.ConeGeometry(2.2, 5, 7), std(0x2f8f4e)); b.position.y = 4.5;
+      tr.add(a, b); scene.add(tr);
+    }
+  }
+}
+const winMat = new THREE.MeshStandardMaterial({ map: windowTex(), emissiveMap: null });
+const tints = ['#ffffff', '#e8d8c8', '#c8d8e8', '#d8c8e8', '#c8e8d0'];
+HEIGHTS.forEach((H, k) => {
+  const geo = new THREE.BoxGeometry(BHALF * 2, H, BHALF * 2), uv = geo.attributes.uv;
+  for (let u = 0; u < uv.count; u++) uv.setXY(u, uv.getX(u) * 2, uv.getY(u) * H / 16);
+  const m = new THREE.InstancedMesh(geo, winMat, Math.max(1, place[k].length)), d = new THREE.Object3D();
+  place[k].forEach(([x, z], n) => { d.position.set(x, H / 2, z); d.updateMatrix(); m.setMatrixAt(n, d.matrix); m.setColorAt(n, new THREE.Color(pick(tints))); });
+  m.count = place[k].length; m.castShadow = m.receiveShadow = true; scene.add(m);
+});
+// Daire - AABB çarpışması: bina içine giren nesneyi dışarı iter
+function collideBuildings(o, r) {
+  const list = blocks.get(Math.floor(o.x / P) + ',' + Math.floor(o.z / P)); if (!list) return false;
+  let hit = false;
+  for (const b of list) {
+    const nx = clamp(o.x, b.x - BHALF, b.x + BHALF), nz = clamp(o.z, b.z - BHALF, b.z + BHALF);
+    let dx = o.x - nx, dz = o.z - nz, d = Math.hypot(dx, dz);
+    if (d >= r) continue; hit = true; o.hx = nx; o.hz = nz;
+    if (d < 1e-4) { const ex = BHALF - Math.abs(o.x - b.x), ez = BHALF - Math.abs(o.z - b.z); if (ex < ez) { dx = Math.sign(o.x - b.x) || 1; dz = 0; o.x = b.x + dx * (BHALF + r); } else { dz = Math.sign(o.z - b.z) || 1; dx = 0; o.z = b.z + dz * (BHALF + r); } }
+    else { o.x = nx + dx / d * r; o.z = nz + dz / d * r; }
+  }
+  return hit;
+}
+
+/* ================= HYUNDAI TUCSON 2024 (prosedürel) ================= */
+const geoCache = {}, matCache = {};
+const bx = (w, h, d) => geoCache[w + "," + h + "," + d] || (geoCache[w + "," + h + "," + d] = new THREE.BoxGeometry(w, h, d));
+const bodyMat = c => matCache[c] || (matCache[c] = std(c, { metalness: .55, roughness: .3 }));
+const M = {
+  glass: std(0x16202c, { metalness: .4, roughness: .15 }), clad: std(0x18181b), grille: std(0x0e0f12, { metalness: .6, roughness: .3 }),
+  drl: std(0xffffff, { emissive: 0xdff1ff, emissiveIntensity: 1.2 }), tail: std(0xff1830, { emissive: 0xff1030, emissiveIntensity: 1 }), tire: std(0x1a1a1d)
+};
+const wheelGeo = new THREE.CylinderGeometry(.46, .46, .3, 14).rotateZ(Math.PI / 2);
+M.rail = std(0xc0c4ca);
+// Tucson renkleri: Polar White, Phantom Black, Amazon Gray, Shimmering Silver, Deep Sea, Crimson Red
+const COLORS = [0xf2f2f0, 0x0f1012, 0x4f5a5a, 0xb8bcc2, 0x1f3b4d, 0x9c1f2c];
+function createTucson(color) {
+  const g = new THREE.Group(), wheels = [], def = [], parts = [];
+  const add = (geo, mat, x, y, z, sh = true) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = sh; g.add(m); return m; };
+  const soft = (w, h, d, sw, sh, sd, mat, x, y, z) => {   // hasar alabilen, çok bölmeli parça (yamulabilir)
+    const m = add(new THREE.BoxGeometry(w, h, d, sw, sh, sd), mat, x, y, z);
+    def.push({ m, o: m.geometry.attributes.position.array.slice() }); return m;
+  };
+  const part = (...a) => { const m = add(...a); parts.push({ m, p: m.position.clone() }); return m; };  // çarpmayla kayan küçük parça
+  const body = bodyMat(color);
+  soft(1.9, .8, 4.5, 8, 3, 16, body, 0, .93, 0);          // yüksek SUV gövdesi
+  add(bx(1.94, .26, 4.54), M.clad, 0, .6, 0, false);      // alt koruma çıtası
+  soft(1.78, .6, 2.7, 6, 2, 10, M.glass, 0, 1.63, -.2);   // cam bölümü
+  soft(1.82, .1, 2.85, 6, 1, 10, body, 0, 1.98, -.2);     // tavan
+  for (const s of [-1, 1]) part(bx(.06, .06, 2.5), M.rail, s * .78, 2.07, -.2, false);   // tavan rayları
+  part(bx(1.5, .42, .08), M.grille, 0, .95, 2.26, false); // parametrik ön ızgara
+  part(bx(.5, .09, .07), M.drl, -.68, 1.2, 2.27, false);  // gizli DRL
+  part(bx(.5, .09, .07), M.drl, .68, 1.2, 2.27, false);
+  part(bx(1.62, .09, .07), M.tail, 0, 1.25, -2.27, false);// arka ışık barı
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) wheels.push(add(wheelGeo, M.tire, sx * .96, .46, sz * 1.4, false));
+  scene.add(g); return { g, wheels, def, parts };
+}
+
+/* ================= ARAÇLAR VE TRAFİK ================= */
+const cars = [], parked = [];
+const G = { started: false, frozen: false, cur: null, fps: 0 };
+function newCar() {
+  const t = createTucson(pick(COLORS));
+  const c = { ...t, x: 0, z: 0, h: 0, v: 0, mode: 'ai', ax: 0, k: 0, d: 1, cruise: rnd(9, 15), cd: 0 };
+  cars.push(c); return c;
+}
+const headingOf = c => c.ax === 0 ? (c.d > 0 ? Math.PI / 2 : -Math.PI / 2) : (c.d > 0 ? 0 : Math.PI);
+function spawnAI(c) {                                // şerit üzerinde, oyuncudan ve araçlardan uzak yerleştir
+  for (let t = 0; t < 40; t++) {
+    c.ax = Math.random() < .5 ? 0 : 1; c.k = ((Math.random() * (2 * N + 1)) | 0) - N; c.d = Math.random() < .5 ? 1 : -1;
+    const a = rnd(-N * P, N * P);
+    if (c.ax === 0) { c.x = a; c.z = c.k * P + c.d * CFG.lane; } else { c.z = a; c.x = c.k * P - c.d * CFG.lane; }
+    if (Math.hypot(c.x - ped.x, c.z - ped.z) < 40) continue;
+    if (cars.some(o => o !== c && Math.hypot(o.x - c.x, o.z - c.z) < 12)) continue;
+    break;
+  }
+  c.h = headingOf(c); c.mode = 'ai'; c.v = c.cruise * .8;
+}
+function aiStep(c, dt, obst) {
+  let target = G.frozen ? 0 : c.cruise;               // tüm trafik durdurulduysa hedef hız 0
+  const fx = Math.sin(c.h), fz = Math.cos(c.h);
+  for (const o of obst) {   // önündeki araç/yaya için frenle
+    if (o === c) continue;
+    const dx = o.x - c.x, dz = o.z - c.z, f = dx * fx + dz * fz, s = Math.abs(dx * fz - dz * fx);
+    if (f > 0 && f < 12 && s < 2.4) target = Math.min(target, Math.max(0, (f - 5.5) * 1.6));
+  }
+  c.v += clamp(target - c.v, -CFG.brake * dt, 6 * dt);
+  const al = c.ax === 0 ? 'x' : 'z', prev = c[al];
+  c[al] += c.d * c.v * dt;
+  const f0 = Math.floor(prev / P), f1 = Math.floor(c[al] / P);
+  if (f0 !== f1) {                                    // kavşaktan geçti: dönebilir
+    const m = Math.max(f0, f1), oldK = c.k, mustTurn = Math.abs(m) >= N && c.d * m > 0;
+    if (mustTurn || (Math.abs(m) <= N && Math.random() < .3)) {
+      c.ax = 1 - c.ax; c.k = m;
+      c.d = Math.abs(oldK) >= N ? -Math.sign(oldK) : (Math.random() < .5 ? 1 : -1);
+    }
+  }
+  const lat = c.ax === 0 ? c.k * P + c.d * CFG.lane : c.k * P - c.d * CFG.lane, la = c.ax === 0 ? 'z' : 'x';
+  c[la] += (lat - c[la]) * Math.min(1, dt * 4);
+  c.h += wrap(headingOf(c) - c.h) * Math.min(1, dt * 5);
+}
+function driveStep(c, dt) {                           // oyuncunun kullandığı araç
+  const up = K('KeyW', 'ArrowUp'), dn = K('KeyS', 'ArrowDown'), L = K('KeyA', 'ArrowLeft'), Rr = K('KeyD', 'ArrowRight');
+  if (up) c.v += CFG.acc * dt * (1 - Math.max(0, c.v) / (CFG.max * 1.1));
+  if (dn) c.v -= (c.v > 0 ? CFG.brake : CFG.acc * .6) * dt;
+  if (K('Space')) c.v -= Math.sign(c.v) * Math.min(Math.abs(c.v), 30 * dt);
+  c.v *= 1 - .02 * dt; c.v = clamp(c.v, -10, CFG.max);
+  const steer = (L ? 1 : 0) - (Rr ? 1 : 0);
+  c.h += steer * CFG.steer * dt * clamp(c.v / 5, -1, 1) / (1 + Math.abs(c.v) / 35);
+  c.x += Math.sin(c.h) * c.v * dt; c.z += Math.cos(c.h) * c.v * dt;
+}
+// Hasar: çarpma noktası çevresindeki köşeleri içeri ve rastgele iter (yamulma)
+const hash = (x, y, z) => { const v = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453; return v - Math.floor(v); };
+function dentCar(c, wx, wz, sp) {
+  if (c.cd > 0 || sp < 3) return; c.cd = .25;
+  const dx = wx - c.x, dz = wz - c.z, ch = Math.cos(c.h), sh = Math.sin(c.h);
+  const lx = clamp(dx * ch - dz * sh, -.95, .95), lz = clamp(dx * sh + dz * ch, -2.25, 2.25), ly = 1.1;   // temas noktası (araç yerel)
+  const il = Math.hypot(lx, lz) || 1, nx = -lx / il, nz = -lz / il, depth = Math.min(.7, sp * .022), R = 1.7;
+  const f = (px, py, pz) => { const d = Math.hypot(px - lx, py - ly, pz - lz); return d < R ? (1 - d / R) ** 2 * depth : 0; };
+  for (const { m } of c.def) {
+    const a = m.geometry.attributes.position, ar = a.array, p = m.position;
+    for (let i = 0; i < ar.length; i += 3) {
+      const k = f(ar[i] + p.x, ar[i + 1] + p.y, ar[i + 2] + p.z); if (!k) continue;
+      const x = ar[i], y = ar[i + 1], z = ar[i + 2];
+      ar[i] += nx * k + (hash(x, y, z) - .5) * k * .6;
+      ar[i + 1] += (hash(y, z, x) - .5) * k * .6 - k * .25;
+      ar[i + 2] += nz * k + (hash(z, x, y) - .5) * k * .5;
+    }
+    a.needsUpdate = true;
+  }
+  for (const { m } of c.parts) {
+    const k = f(m.position.x, m.position.y, m.position.z); if (!k) continue;
+    m.position.x += nx * k; m.position.z += nz * k; m.rotation.z += (Math.random() - .5) * k * 2; m.rotation.x += (Math.random() - .5) * k;
+  }
+}
+function repairAll() {                                // T: tüm araçların hasarını sıfırla
+  for (const c of cars) {
+    for (const { m, o } of c.def) { m.geometry.attributes.position.array.set(o); m.geometry.attributes.position.needsUpdate = true; }
+    for (const { m, p } of c.parts) { m.position.copy(p); m.rotation.set(0, 0, 0); }
+  }
+  toast('Tüm hasarlar onarıldı');
+}
+function updateCars(dt) {
+  const obst = cars.concat(walkers, G.cur ? [] : [ped]);
+  for (const c of cars) {
+    c.cd = Math.max(0, c.cd - dt);
+    if (c.mode === 'ai') aiStep(c, dt, obst);
+    else if (c.mode === 'player') driveStep(c, dt);
+    else { c.v *= 1 - 3 * dt; c.x += Math.sin(c.h) * c.v * dt; c.z += Math.cos(c.h) * c.v * dt; }
+    c.x = clamp(c.x, -LIM, LIM); c.z = clamp(c.z, -LIM, LIM);
+    const sp = Math.abs(c.v);
+    if (collideBuildings(c, 2.1)) { dentCar(c, c.hx, c.hz, sp); c.v *= c.mode === 'player' ? -.25 : .3; }
+  }
+  for (let i = 0; i < cars.length; i++) for (let j = i + 1; j < cars.length; j++) {   // araç-araç itişme + hasar
+    const a = cars[i], b = cars[j], dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+    if (d < 3.6 && d > 1e-4) {
+      const rel = Math.hypot(Math.sin(a.h) * a.v - Math.sin(b.h) * b.v, Math.cos(a.h) * a.v - Math.cos(b.h) * b.v);
+      const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, p = (3.6 - d) / 2 / d;
+      a.x -= dx * p; a.z -= dz * p; b.x += dx * p; b.z += dz * p;
+      dentCar(a, mx, mz, rel); dentCar(b, mx, mz, rel);
+      if (rel > 4) { a.v *= .7; b.v *= .7; }
+      if (a.mode === 'player' || b.mode === 'player') { const pc = a.mode === 'player' ? a : b; pc.v *= .85; }
+    }
+  }
+  const pc = G.cur;                                   // oyuncunun aracı yayaya çarparsa yayayı yere yıkar
+  if (pc && Math.abs(pc.v) > 3) for (const w of walkers) if (w.down <= 0 && Math.hypot(w.x - pc.x, w.z - pc.z) < 2.3) {
+    w.down = 3.5; w.x += Math.sin(pc.h) * 1.5; w.z += Math.cos(pc.h) * 1.5; pc.v *= .97;
+  }
+  for (const w of walkers) walkerStep(w, dt);
+  if (trT > 0 && (trT -= dt) <= 0) tracer.visible = false;
+  for (const c of cars) {
+    c.g.position.set(c.x, 0, c.z); c.g.rotation.y = c.h;
+    for (const w of c.wheels) w.rotation.x += c.v * dt / .46;
+  }
+}
+
+/* ================= YAYA ================= */
+function createPed(jc = 0xe8503a, pc = 0x2b3350, sc = 0xffcc99) {
+  const g = new THREE.Group(), jacket = std(jc), pants = std(pc), skin = std(sc); g.rotation.order = 'YXZ';
+  const part = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.castShadow = true; return o; };
+  g.add(part(new THREE.BoxGeometry(.55, .7, .3), jacket, 0, 1.2, 0), part(new THREE.SphereGeometry(.21, 8, 6), skin, 0, 1.78, 0));
+  const limb = (x, y, w, h, m) => { const p = new THREE.Group(); p.position.set(x, y, 0); p.add(part(new THREE.BoxGeometry(w, h, w), m, 0, -h / 2, 0)); g.add(p); return p; };
+  return { g, legs: [limb(-.14, .85, .2, .85, pants), limb(.14, .85, .2, .85, pants)], arms: [limb(-.38, 1.5, .15, .65, jacket), limb(.38, 1.5, .15, .65, jacket)], t: 0 };
+}
+const ped = Object.assign(createPed(), { x: 9, z: 9, h: 0, aim: 0, cd: 0, fl: 0 });
+scene.add(ped.g);
+
+/* ================= DOLAŞAN İNSANLAR (kaldırımda yürür, kavşakta yol değiştirir) ================= */
+const walkers = [];
+function emojiMat(ch) {                               // emoji ikon (başının üstünde görünür)
+  const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d');
+  x.font = '48px serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(ch, 32, 34);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.SpriteMaterial({ map: t, fog: false, transparent: true });
+}
+const iconMat = { star: emojiMat('💫'), mad: emojiMat('💢') };
+const SKIN = [0xffcc99, 0xe0ac82, 0x8d5a3c, 0xf1c9a5], JACK = [0x3a86ff, 0xe8503a, 0x2ec4b6, 0xffbe0b, 0x8338ec, 0xf4f4f4, 0x2b2d42], PANT = [0x2b3350, 0x3d3d3d, 0x6b4a2f, 0x1f2937];
+function spawnWalker() {
+  const w = Object.assign(createPed(pick(JACK), pick(PANT), pick(SKIN)), {
+    x: 0, z: 0, h: 0, ax: Math.random() < .5 ? 0 : 1, k: ((Math.random() * (2 * N + 1)) | 0) - N,
+    d: Math.random() < .5 ? 1 : -1, s: Math.random() < .5 ? 1 : -1, sp: rnd(1.2, 1.9), down: 0, mad: false, angry: 0, hitCd: 0
+  });
+  const a = rnd(-N * P, N * P);
+  if (w.ax === 0) { w.x = a; w.z = w.k * P + w.s * 9.3; } else { w.z = a; w.x = w.k * P + w.s * 9.3; }
+  w.h = headingOf(w); scene.add(w.g);
+  w.icon = new THREE.Sprite(iconMat.star); w.icon.scale.set(1.1, 1.1, 1); w.icon.visible = false; scene.add(w.icon);
+  walkers.push(w);
+}
+function walkerStep(w, dt) {
+  w.icon.visible = false;
+  if (w.down > 0) {                                   // bayıldı: yatar, başında yıldızlar döner
+    w.down -= dt; const lay = clamp(w.down / .6, 0, 1);
+    w.g.rotation.x = -Math.PI / 2 * lay; w.g.position.set(w.x, .25 * lay, w.z);
+    if (w.mad && w.down > 0) { w.icon.material = iconMat.star; w.icon.position.set(w.x, 1.2 + Math.sin(w.down * 6) * .1, w.z); w.icon.visible = true; }
+    if (w.down <= 0 && w.mad) { w.mad = false; w.angry = 18; }   // uyanınca sinirli
+    return;
+  }
+  if (w.angry > 0) {                                  // sinirli: oyuncuya koşar, yumruk sallar, iter
+    w.angry -= dt;
+    const tg = G.cur || ped, dx = tg.x - w.x, dz = tg.z - w.z, d = Math.hypot(dx, dz) || 1, near = d < (G.cur ? 3.2 : 1.7);
+    w.h += wrap(Math.atan2(dx, dz) - w.h) * Math.min(1, dt * 10);
+    w.icon.material = iconMat.mad; w.icon.position.set(w.x, 2.5, w.z); w.icon.visible = true;
+    let sw = 0;
+    if (!near) {
+      w.x += dx / d * 4.6 * dt; w.z += dz / d * 4.6 * dt; collideBuildings(w, .5);
+      w.t += dt * 12; sw = Math.sin(w.t) * .9; w.arms[0].rotation.x = -sw; w.arms[1].rotation.x = sw;
+    } else {
+      w.t += dt * 14; const f = Math.sin(w.t) * .5;
+      w.arms[0].rotation.x = -2.2 + f; w.arms[1].rotation.x = -2.2 - f;
+      if ((w.hitCd -= dt) <= 0) {
+        w.hitCd = 1.2;
+        if (G.cur) dentCar(G.cur, w.x, w.z, 4);
+        else { ped.x += dx / d * 1.4; ped.z += dz / d * 1.4; collideBuildings(ped, .5); toast('Sinirli biri seni itti!'); }
+      }
+    }
+    w.legs[0].rotation.x = sw; w.legs[1].rotation.x = -sw;
+    w.g.rotation.x = 0; w.g.position.set(w.x, 0, w.z); w.g.rotation.y = w.h;
+    if (w.angry <= 0) { w.ax = 0; w.k = clamp(Math.round(w.z / P), -N, N); w.s = w.z >= w.k * P ? 1 : -1; w.d = Math.random() < .5 ? 1 : -1; }
+    return;
+  }
+  const al = w.ax === 0 ? 'x' : 'z', prev = w[al];
+  w[al] += w.d * w.sp * dt;
+  const f0 = Math.floor(prev / P), f1 = Math.floor(w[al] / P);
+  if (f0 !== f1) {
+    const m = Math.max(f0, f1), oldK = w.k;
+    if ((Math.abs(m) >= N && w.d * m > 0) || (Math.abs(m) <= N && Math.random() < .35)) {
+      w.ax = 1 - w.ax; w.k = m; w.s = Math.random() < .5 ? 1 : -1;
+      w.d = Math.abs(oldK) >= N ? -Math.sign(oldK) : (Math.random() < .5 ? 1 : -1);
+    }
+  }
+  const la = w.ax === 0 ? 'z' : 'x';
+  w[la] += (w.k * P + w.s * 9.3 - w[la]) * Math.min(1, dt * 1.2);
+  w.h += wrap(headingOf(w) - w.h) * Math.min(1, dt * 6); w.t += dt * w.sp * 2.2;
+  const sw = Math.sin(w.t) * .7;
+  w.legs[0].rotation.x = sw; w.legs[1].rotation.x = -sw; w.arms[0].rotation.x = -sw; w.arms[1].rotation.x = sw;
+  w.g.rotation.x = 0; w.g.position.set(w.x, 0, w.z); w.g.rotation.y = w.h;
+}
+
+/* ================= SİLAH (yayayken): vurulan bayılır, uyanınca sinirlenir ================= */
+const gun = new THREE.Mesh(new THREE.BoxGeometry(.09, .34, .14), std(0x1c1c20)); gun.position.set(0, -.72, 0); ped.arms[0].add(gun);
+const flash = new THREE.Mesh(new THREE.SphereGeometry(.12, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+flash.position.set(0, -.95, 0); flash.visible = false; ped.arms[0].add(flash);
+const tracer = new THREE.Mesh(new THREE.BoxGeometry(.05, .05, 1), new THREE.MeshBasicMaterial({ color: 0xffe066 }));
+tracer.visible = false; scene.add(tracer); let trT = 0;
+let AC;                                               // sentezlenmiş silah sesi (ses dosyası yok)
+function sfxShot() {
+  try {
+    AC = AC || new AudioContext(); const n = AC.sampleRate * .12 | 0, b = AC.createBuffer(1, n, AC.sampleRate), d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3);
+    const src = AC.createBufferSource(), g = AC.createGain(); src.buffer = b; g.gain.value = .3; src.connect(g).connect(AC.destination); src.start();
+  } catch (e) { }
+}
+const inBld = (x, z) => { const l = blocks.get(Math.floor(x / P) + ',' + Math.floor(z / P)); return !!l && l.some(b => Math.abs(x - b.x) < BHALF && Math.abs(z - b.z) < BHALF); };
+function fire() {
+  if (!G.started || G.cur || ped.cd > 0) return;
+  ped.cd = .22; ped.aim = .7; ped.fl = .06; sfxShot();
+  const y = cam.yaw, fx = Math.sin(y), fz = Math.cos(y), MAXR = 45;
+  let reach = MAXR; for (let t = 2; t < MAXR; t += 1.5) if (inBld(ped.x + fx * t, ped.z + fz * t)) { reach = t; break; }   // binalar mermiyi durdurur
+  let tgt = null, bf = reach;
+  for (const w of walkers) {                           // hafif nişan yardımı: nişan hattına en yakın yaya
+    if (w.down > 0) continue;
+    const dx = w.x - ped.x, dz = w.z - ped.z, f = dx * fx + dz * fz, s = Math.abs(dx * fz - dz * fx);
+    if (f > 1 && f < bf && s < .8 + f * .05) { tgt = w; bf = f; }
+  }
+  const mx = ped.x - .38 * Math.cos(y) + .9 * Math.sin(y), mz = ped.z + .38 * Math.sin(y) + .9 * Math.cos(y);
+  const ex = tgt ? tgt.x : ped.x + fx * reach, ez = tgt ? tgt.z : ped.z + fz * reach, ey = tgt ? 1.3 : 1.4;
+  const len = Math.hypot(ex - mx, ey - 1.4, ez - mz);
+  tracer.position.set((mx + ex) / 2, (1.4 + ey) / 2, (mz + ez) / 2); tracer.scale.z = len; tracer.lookAt(ex, ey, ez); tracer.visible = true; trT = .06;
+  if (tgt) { tgt.down = 6; tgt.mad = true; tgt.angry = 0; }   // bayıl (kansız): sonra kalkıp sinirlenir
+}
+function updatePed(dt) {
+  const mx = (K('KeyD') ? 1 : 0) - (K('KeyA') ? 1 : 0), mz = (K('KeyW', 'ArrowUp') ? 1 : 0) - (K('KeyS', 'ArrowDown') ? 1 : 0);
+  const fx = Math.sin(cam.yaw), fz = Math.cos(cam.yaw);
+  let vx = fx * mz - fz * mx, vz = fz * mz + fx * mx; const l = Math.hypot(vx, vz);
+  if (l > 0) {
+    const sp = K('ShiftLeft', 'ShiftRight') ? CFG.run : CFG.walk; vx /= l; vz /= l;
+    ped.x += vx * sp * dt; ped.z += vz * sp * dt; ped.h += wrap(Math.atan2(vx, vz) - ped.h) * Math.min(1, dt * 12); ped.t += dt * sp * 1.6;
+  }
+  if (K('ArrowLeft')) cam.yaw += 2 * dt; if (K('ArrowRight')) cam.yaw -= 2 * dt;
+  collideBuildings(ped, .5);
+  for (const c of cars) { const dx = ped.x - c.x, dz = ped.z - c.z, d = Math.hypot(dx, dz); if (d < 2.2 && d > 1e-4) { ped.x = c.x + dx / d * 2.2; ped.z = c.z + dz / d * 2.2; } }
+  ped.x = clamp(ped.x, -LIM, LIM); ped.z = clamp(ped.z, -LIM, LIM);
+  ped.cd -= dt; if (K('KeyF')) fire();
+  if (ped.aim > 0) { ped.aim -= dt; ped.h += wrap(cam.yaw - ped.h) * Math.min(1, dt * 20); }
+  const s = l > 0 ? Math.sin(ped.t) * .8 : 0;
+  ped.legs[0].rotation.x = s; ped.legs[1].rotation.x = -s; ped.arms[0].rotation.x = ped.aim > 0 ? -1.5 : -s; ped.arms[1].rotation.x = s;
+  ped.fl -= dt; flash.visible = ped.fl > 0;
+  ped.g.position.set(ped.x, 0, ped.z); ped.g.rotation.y = ped.h;
+}
+
+/* ================= BİNME / İNME ================= */
+function toast(t) { const e = $('toast'); e.textContent = t; e.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => e.style.opacity = 0, 1800); }
+function interact() {
+  if (G.cur) return exitCar();
+  let best = null, bd = 30;
+  for (const c of cars) { const d = (c.x - ped.x) ** 2 + (c.z - ped.z) ** 2; if (d < bd) { bd = d; best = c; } }
+  if (!best) return toast('Yakında araç yok');
+  if (best.mode === 'parked') parked.splice(parked.indexOf(best), 1);
+  best.mode = 'player'; best.v *= .3; G.cur = best; ped.g.visible = false;
+  if (cars.filter(c => c.mode === 'ai').length < CFG.traffic) spawnAI(newCar());   // trafik sayısını koru
+  toast('Hyundai Tucson 2024 – sürüyorsun');
+}
+function exitCar() {
+  const c = G.cur; if (Math.abs(c.v) > 7) return toast('Önce yavaşla');
+  c.mode = 'parked'; parked.push(c); G.cur = null;
+  ped.x = c.x + Math.cos(c.h) * 2.6; ped.z = c.z - Math.sin(c.h) * 2.6; ped.g.visible = true; collideBuildings(ped, .5);
+  if (parked.length > CFG.maxParked) spawnAI(parked.shift());                       // en eski park halindeki aracı trafiğe geri ver
+}
+function toggleFreeze() { G.frozen = !G.frozen; toast(G.frozen ? 'Tüm trafik durdu' : 'Trafik akıyor'); }
+
+/* ================= GİRDİ ================= */
+const keys = new Set(), K = (...c) => c.some(k => keys.has(k));
+function press(c) { if (!G.started) return; if (c === 'KeyE') interact(); else if (c === 'KeyH') toggleFreeze(); else if (c === 'KeyT') repairAll(); }
+addEventListener('keydown', e => {
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+  if (!e.repeat) { keys.add(e.code); press(e.code); }
+});
+addEventListener('keyup', e => keys.delete(e.code));
+document.querySelectorAll('#pad button').forEach(b => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', e => { e.stopPropagation(); keys.add(k); press(k); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => keys.delete(k)));
+});
+const cam = { yaw: 0, pitch: .35 }; let drag = null;
+addEventListener('pointerdown', e => { if (!e.target.closest('button')) drag = { x: e.clientX, y: e.clientY, m: 0 }; });
+addEventListener('pointermove', e => {
+  if (!drag) return;
+  cam.yaw -= (e.clientX - drag.x) * .005; cam.pitch = clamp(cam.pitch + (e.clientY - drag.y) * .004, .08, 1.2);
+  drag.m += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y); drag.x = e.clientX; drag.y = e.clientY;
+});
+addEventListener('pointerup', () => { if (drag && drag.m < 6) fire(); drag = null; });   // sürüklemeden tıklama = ateş
+$('startBtn').addEventListener('click', () => {
+  G.started = true; $('menu').classList.add('hidden'); $('hud').classList.remove('hidden'); $('spd').classList.remove('hidden');
+});
+
+/* ================= KAMERA, HUD, DÖNGÜ ================= */
+function updateCamera(dt) {
+  let tx, tz, dist, pitch;
+  if (G.cur) {
+    const c = G.cur; tx = c.x; tz = c.z; dist = 9; pitch = .3;
+    cam.yaw += wrap(c.h - cam.yaw) * Math.min(1, dt * 3.5);
+  } else { tx = ped.x; tz = ped.z; dist = 6; pitch = cam.pitch; }
+  const cp = Math.cos(pitch);
+  camera.position.set(tx - Math.sin(cam.yaw) * cp * dist, Math.sin(pitch) * dist + 1.6, tz - Math.cos(cam.yaw) * cp * dist);
+  camera.lookAt(tx, 1.3, tz);
+  sun.position.set(tx + 40, 80, tz + 30); sun.target.position.set(tx, 0, tz);
+}
+function updateHUD() {
+  $('hud').innerHTML = `Trafik: <b>${G.frozen ? 'Durdu ⏸' : 'Akıyor ▶'}</b> · Araç: <b>${cars.length}</b> · İnsan: <b>${walkers.length}</b><br>` +
+    (G.cur ? 'E: araçtan in · Space: el freni · T: onar' : 'E: araca bin · F / tık: ateş · H: trafik · T: onar');
+  $('spd').innerHTML = G.cur ? `${Math.round(Math.abs(G.cur.v) * 3.6)} <small>km/sa</small>` : '🚶';
+}
+let fAcc = 0, fN = 0;                                  // FPS düşerse gölgeleri kapat
+function fpsCheck(raw) {
+  if (raw > .5) return; fAcc += raw; fN++;
+  if (fAcc < 2) return;
+  if (fN / fAcc < 35 && renderer.shadowMap.enabled) {
+    renderer.shadowMap.enabled = false; sun.castShadow = false; renderer.setPixelRatio(1); resize();
+    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
+  }
+  fAcc = fN = 0;
+}
+for (let i = 0; i < CFG.traffic; i++) spawnAI(newCar());
+for (let i = 0; i < 32; i++) spawnWalker();
+const clock = new THREE.Clock();
+function loop() {
+  requestAnimationFrame(loop);
+  const raw = clock.getDelta(), dt = Math.min(raw, .05);
+  if (G.started) { updateCars(dt); if (!G.cur) updatePed(dt); } else { cam.yaw += dt * .15; updateCars(dt); }
+  updateCamera(dt); updateHUD();
+  renderer.render(scene, camera); fpsCheck(raw);
+}
+loop();
+</script>
+</body>
+</html>
