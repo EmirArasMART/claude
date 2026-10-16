@@ -1,0 +1,88 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Novarge Okuma Yazma</title><style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;touch-action:manipulation}
+body{margin:0;min-height:100vh;font-family:"Comic Sans MS","Chalkboard SE","Trebuchet MS",Arial,sans-serif;color:#4a3f8f;background:linear-gradient(160deg,#c9f0ff,#fff3c4 55%,#ffd9ec)}
+[hidden]{display:none!important}
+button{font:inherit;font-size:22px;font-weight:700;border:0;border-radius:24px;padding:10px 18px;margin:5px;background:#fff;color:#4a3f8f;box-shadow:0 5px 0 rgba(0,0,0,.18);cursor:pointer}
+button:active{transform:translateY(3px);box-shadow:0 2px 0 rgba(0,0,0,.18)}
+button:disabled{opacity:.4}
+#top{display:flex;align-items:center;padding:8px 12px;gap:6px}
+#top button{font-size:20px;padding:8px 12px}
+#bar{flex:1;height:18px;background:#fff;border-radius:9px;overflow:hidden;box-shadow:inset 0 2px 4px rgba(0,0,0,.15)}
+#fill{display:block;height:100%;width:100%;background:linear-gradient(90deg,#7ed957,#ffd23f);transition:width 1s}
+#app{max-width:720px;margin:0 auto;padding:4px 14px 30px;text-align:center}
+h1{font-size:clamp(30px,8vw,52px);margin:8px 0 16px;color:#ff5c9d;text-shadow:3px 3px 0 #fff;line-height:1.1}
+h2{font-size:clamp(22px,5vw,30px);margin:4px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.card{color:#fff;margin:0;padding:18px 6px;font-size:clamp(20px,5vw,28px);text-shadow:0 2px 0 rgba(0,0,0,.2)}
+.card b{display:block;font-size:clamp(44px,12vw,70px);text-shadow:none}
+.row{display:flex;flex-wrap:wrap;justify-content:center;align-items:center}
+.emo{font-size:clamp(70px,20vw,110px);line-height:1.1}
+.tile{min-width:64px;height:68px;font-size:32px;background:#ffe27a}
+.key{min-width:48px;padding:6px 0;font-size:24px;background:#d6f5ff;margin:3px}
+.slot{min-width:50px;height:64px;margin:4px;border-bottom:6px solid #ffb703;font-size:44px;font-weight:700;color:#ff5c9d}
+.pic{font-size:clamp(60px,18vw,90px);background:#fff;padding:10px 18px}
+.word{font-size:clamp(40px,11vw,64px);font-weight:700;color:#ff5c9d;margin:6px}
+.bub{background:#fff;border-radius:24px;padding:10px 16px;font-size:clamp(26px,7vw,40px);font-weight:700;color:#ff5c9d;min-height:64px;margin:8px 0}
+#msg{height:34px;font-size:26px;color:#e6397d;font-weight:700}
+#cv{position:relative;margin:6px auto;background:#fff;border-radius:28px;box-shadow:0 6px 0 rgba(0,0,0,.15)}
+#cv canvas{position:absolute;left:0;top:0;border-radius:28px;touch-action:none}
+.pg{width:70%;max-width:360px;height:16px;margin:10px auto;background:#fff;border-radius:9px;overflow:hidden}
+.pg i{display:block;height:100%;width:0;background:#7ed957;transition:width .3s}
+.shake{animation:sh .4s}@keyframes sh{25%{transform:translateX(-10px)}75%{transform:translateX(10px)}}
+#ov{position:fixed;inset:0;z-index:9;background:#fff8dc;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px}
+</style></head><body>
+<div id="top"><button onclick="menu()">🏠</button><div id="bar"><i id="fill"></i></div><b id="st"></b><button onclick="par()">👨‍👩‍👧</button></div>
+<main id="app"></main><div id="ov" hidden></div>
+<script>
+const $=q=>document.querySelector(q),A=$('#app'),R=n=>Math.floor(Math.random()*n),sh=a=>a.map(x=>[Math.random(),x]).sort((a,b)=>a[0]-b[0]).map(x=>x[1]);
+const ld=k=>{try{return localStorage.getItem(k)}catch(e){return null}},sv=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const L=[..."ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ"],PR=["Harikasın!","Bravo!","Çok güzel!","Süpersin!","Aferin!"];
+const W=[["ANA","👩"],["BABA","👨"],["ELMA","🍎"],["ARABA","🚗"],["KEDİ","🐱"],["KUŞ","🐦"],["TOP","⚽"],["AY","🌙"],["GÜL","🌹"],["SU","💧"],["EV","🏠"],["BALIK","🐟"],["ÇİÇEK","🌼"],["KAPI","🚪"],["MUZ","🍌"],["OKUL","🏫"],["SÜT","🥛"],["YILDIZ","⭐"],["KİTAP","📖"],["ŞEKER","🍬"],["GÜNEŞ","☀️"],["İNEK","🐄"],["UÇAK","✈️"],["ÖRDEK","🦆"]];
+const SY=[..."MBKTLNSDPR"].flatMap(a=>[..."AEIİOU"].map(b=>a+b));
+const SN=[["Ali topu at.","⚽"],["Ela elma yer.","🍎"],["Kedi süt içer.","🐱"],["Kuş uçar.","🐦"],["Baba araba sürer.","🚗"],["Ay çok güzel.","🌙"],["Ben okula giderim.","🏫"],["Ana su içti.","💧"]];
+const ST=[["✏️","Harf Çiz","#ff5c9d"],["🔗","Hece","#f08a24"],["🧩","Kelime Kur","#27ae60"],["🎧","Dinle ve Bul","#2d8fd5"],["⌨️","Yaz","#9b59b6"],["📖","Cümle Kur","#e74c3c"]];
+let stars=+ld('nv_s')||0,un=+ld('nv_u')||1,lim=+ld('nv_l')||15,pos=+ld('nv_p')||0,lc=0,lock=0,S=-1,n=0,it=[];
+const D=new Date().toISOString().slice(0,10);let sec=+ld('nv_t'+D)||0;
+function say(t,r=.8){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t.toLocaleLowerCase('tr'));u.lang='tr-TR';u.rate=r;u.pitch=1.15;speechSynthesis.speak(u)}catch(e){}}
+let AC;function beep(f,d=.15){try{AC=AC||new(window.AudioContext||webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.frequency.value=f;g.gain.value=.15;o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+d)}catch(e){}}
+const ok=()=>{beep(660);setTimeout(()=>beep(880),120)},bad=()=>beep(200,.25);
+const shk=()=>{A.classList.remove('shake');void A.offsetWidth;A.classList.add('shake')};
+const hd=t=>`<div>${it.map((_,k)=>k<n?'⭐':k==n?'🔵':'⚪').join('')}</div><h2>${t}</h2><div id=msg></div>`;
+function upd(){$('#st').textContent='⭐'+stars;$('#fill').style.width=Math.max(0,100-sec/(lim*60)*100)+'%'}
+function menu(){S=-1;try{speechSynthesis.cancel()}catch(e){}A.innerHTML=`<h1>🌈 Novarge<br>Okuma Yazma</h1><div class=grid>${ST.map((x,i)=>`<button class=card style="background:${x[2]}" ${i>=un?'disabled':''} onclick="play(${i})"><b>${i<un?x[0]:'🔒'}</b>${x[1]}</button>`).join('')}</div>`}
+function play(i){S=i;n=0;it=i==0?[0,1,2,3,4].map(k=>L[(pos+k)%29]):i==1?sh(SY).slice(0,5):i==5?sh(SN).slice(0,4):sh(W).slice(0,5);round()}
+function round(){lock=0;if(n>=it.length)return fin();[()=>trace(it[n],'Harfi parmağınla çiz!'),()=>trace(it[n],'İki harfi birlikte çiz!'),()=>build(it[n]),()=>pick(it[n]),()=>wr(it[n]),()=>sen(it[n])][S]()}
+function win(){if(lock)return;lock=1;ok();stars++;sv('nv_s',stars);upd();$('#msg').textContent=PR[R(5)]+' 🎉';setTimeout(()=>{n++;round()},1600)}
+function fin(){if(S==0){pos=(pos+5)%29;sv('nv_p',pos)}if(S+2>un){un=S+2;sv('nv_u',un)}A.innerHTML=`<div class=emo>🏆</div><h2>Tebrikler, Novarge Kahramanı!</h2><div class=emo>⭐${stars}</div><div class=row><button onclick="play(S)">🔁 Tekrar</button><button onclick="menu()">🏠 Menü</button></div>`;say('Aferin! Harikasın!')}
+function trace(t,ti){const x=lc?t.toLocaleLowerCase('tr'):t,W=Math.max(240,Math.min(innerWidth-30,innerHeight-300,460)),fs=Math.min(.85*W,.9*W/(.72*x.length));
+A.innerHTML=hd(ti)+`<div class=row><button onclick="say('${t}')">🔊</button><button onclick="lc=!lc;round()">Aa</button><button onclick="clr()">🧽</button></div><div id=cv style="width:${W}px;height:${W}px"><canvas id=g width=${W} height=${W}></canvas><canvas id=u width=${W} height=${W}></canvas></div><div class=pg><i id=pb></i></div>`;
+const pt=(c,m)=>{c.font=`bold ${fs}px Arial,sans-serif`;c.textAlign='center';c.textBaseline='middle';c[m+'Text'](x,W/2,W/2+fs*.05)};
+const g=$('#g').getContext('2d'),u=$('#u'),c=u.getContext('2d'),m=document.createElement('canvas');m.width=m.height=W;const mc=m.getContext('2d');
+g.fillStyle='#e9e3ff';pt(g,'fill');g.setLineDash([9,9]);g.lineWidth=3;g.strokeStyle='#a99cff';pt(g,'stroke');
+mc.fillStyle='#000';pt(mc,'fill');const md=mc.getImageData(0,0,W,W).data,I=[],O=[];
+for(let y=0;y<W;y+=5)for(let z=0;z<W;z+=5)(md[(y*W+z)*4+3]>128?I:O).push((y*W+z)*4+3);
+c.lineWidth=fs*.13;c.lineCap=c.lineJoin='round';c.strokeStyle=c.fillStyle='#ff5c9d';
+let dn=0,lx,ly;const P=e=>{const r=u.getBoundingClientRect();return[(e.clientX-r.left)*W/r.width,(e.clientY-r.top)*W/r.height]};
+u.onpointerdown=e=>{if(lock)return;dn=1;[lx,ly]=P(e);u.setPointerCapture(e.pointerId);c.beginPath();c.arc(lx,ly,c.lineWidth/2,0,7);c.fill()};
+u.onpointermove=e=>{if(!dn)return;const[a,b]=P(e);c.beginPath();c.moveTo(lx,ly);c.lineTo(a,b);c.stroke();lx=a;ly=b};
+u.onpointerup=u.onpointercancel=()=>{if(!dn)return;dn=0;const d=c.getImageData(0,0,W,W).data;let a=0,b=0;for(const i of I)if(d[i])a++;for(const i of O)if(d[i])b++;const v=a/I.length,sp=b/(a+b||1);$('#pb').style.width=Math.min(100,v/.6*100)+'%';if(v>=.6&&sp<=.5){say(t);win()}else if(sp>.5){bad();shk();window.clr()}};
+window.clr=()=>{c.clearRect(0,0,W,W);$('#pb').style.width=0};say(t)}
+function build([w,e]){const c=[...w];let T=sh([...c,...sh(L.filter(x=>!c.includes(x))).slice(0,3)]).map(x=>({x,u:0})),got=[];
+const dr=()=>A.innerHTML=hd('Harfleri sırayla dokun!')+`<div class=emo>${e}</div><button onclick="say('${w}')">🔊</button><div class=row>${c.map((_,k)=>`<div class=slot>${got[k]||''}</div>`).join('')}</div><div class=row>${T.map((o,k)=>`<button class=tile ${o.u?'disabled':''} onclick="tp(${k})">${o.x}</button>`).join('')}</div>`;
+window.tp=k=>{const o=T[k];if(o.u||got.length>=c.length)return;if(o.x==c[got.length]){o.u=1;got.push(o.x);beep(500+got.length*80);dr();if(got.length==c.length){say(w);win()}}else{bad();shk()}};dr();say(w)}
+function pick([w,e]){const rd=n%2,o=sh([[w,e],...sh(W.filter(x=>x[0]!=w)).slice(0,2)]);
+A.innerHTML=hd(rd?'Hangi resim?':'Dinle, resmi bul!')+(rd?`<div class=word>${w}</div>`:'')+`<button onclick="say('${w}')">🔊 Dinle</button><div class=row>${o.map(x=>`<button class=pic onclick="pk(this,${x[0]==w})">${x[1]}</button>`).join('')}</div>`;
+window.pk=(b,r)=>{if(r){say(w);win()}else{bad();b.disabled=1;shk()}};if(!rd)say(w)}
+function wr([w,e]){const c=[...w];let got=[];
+const dr=()=>A.innerHTML=hd('Duyduğun kelimeyi yaz!')+`<div class=emo>${e}</div><div class=row><button onclick="say('${w}')">🔊</button><button onclick="ky(c0())">💡</button></div><div class=row>${c.map((_,k)=>`<div class=slot>${got[k]||''}</div>`).join('')}</div><div class=row>${L.map(x=>`<button class=key onclick="ky('${x}')">${x}</button>`).join('')}</div>`;
+window.c0=()=>c[got.length];window.ky=x=>{if(got.length>=c.length)return;if(x==c[got.length]){got.push(x);beep(600);dr();if(got.length==c.length){say(w);win()}}else{bad();shk()}};dr();say(w)}
+function sen([t,e]){const c=t.split(' ');let T=sh(c.map(x=>({x,u:0}))),got=[];
+const dr=()=>A.innerHTML=hd('Cümleyi sırayla kur!')+`<div class=emo>${e}</div><button onclick="say('${t}')">🔊 Oku</button><div class=bub>${got.join(' ')||'…'}</div><div class=row>${T.map((o,k)=>`<button class=tile ${o.u?'disabled':''} onclick="sk(${k})">${o.x}</button>`).join('')}</div>`;
+window.sk=k=>{const o=T[k];if(o.u||got.length>=c.length)return;if(o.x==c[got.length]){o.u=1;got.push(o.x);dr();if(got.length==c.length){say(t);win()}else say(o.x)}else{bad();shk()}};dr();say(t)}
+function gate(){const a=3+R(6),b=3+R(6);return +prompt(`Ebeveyn doğrulaması: ${a} + ${b} = ?`)==a+b}
+function par(){if(!gate())return;const v=+prompt('Günlük oyun süresi (dakika):',lim);if(v>0){lim=v;sv('nv_l',v)}if(confirm('Tüm bölümler açılsın mı?')){un=7;sv('nv_u',7)}if(confirm('Bugünkü süre sayacı sıfırlansın mı?')){sec=0;sv('nv_t'+D,0)}upd();menu()}
+function brk(){try{speechSynthesis.cancel()}catch(e){}const o=$('#ov');o.hidden=0;o.innerHTML=`<div class=emo>🌳</div><h2>Mola zamanı!</h2><p style="font-size:22px">Bugünkü oyun süren doldu.<br>Su iç, biraz zıpla, camdan dışarı bak!</p><button onclick="more()">👨‍👩‍👧 Ebeveyn: +10 dk</button>`}
+function more(){if(gate()){sec=Math.max(0,sec-600);$('#ov').hidden=1;upd()}}
+setInterval(()=>{if(document.hidden||!$('#ov').hidden)return;sec++;if(sec%10==0)sv('nv_t'+D,sec);upd();if(sec>=lim*60)brk()},1000);
+upd();menu();
+</script></body></html>
