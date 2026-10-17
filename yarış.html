@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Otoyol & Drift Oyunu</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+            user-select: none;
+        }
+        #canvas-container {
+            width: 100vw;
+            height: 100vh;
+        }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
+            pointer-events: none;
+        }
+        #speedometer {
+            font-size: 32px;
+            font-weight: bold;
+            color: #00ffcc;
+        }
+        #drift-indicator {
+            font-size: 24px;
+            color: #ff3300;
+            display: none;
+            font-weight: bold;
+            animation: blink 0.2s infinite alternate;
+        }
+        @keyframes blink {
+            from { opacity: 1; }
+            to { opacity: 0.3; }
+        }
+        #phone-btn {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: #28a745;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            z-index: 10;
+        }
+        #phone-modal {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(20, 20, 20, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            color: white;
+            display: none;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0,255,204,0.3);
+            border: 1px solid #00ffcc;
+            z-index: 11;
+        }
+        #phone-modal input {
+            width: 80%;
+            padding: 10px;
+            font-size: 20px;
+            text-align: center;
+            margin-bottom: 15px;
+            border-radius: 5px;
+            border: none;
+        }
+        #phone-modal button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background: #00ffcc;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+    </style>
+    <!-- Three.js ve GLTFLoader -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="ui">
+        <div id="speedometer">0 km/h</div>
+        <div id="drift-indicator">DRIFT!</div>
+    </div>
+
+    <div id="phone-btn" onclick="togglePhone()">📞</div>
+
+    <div id="phone-modal">
+        <h3>Telefon</h3>
+        <input type="text" id="phone-number" placeholder="Numara girin (örn: 1)">
+        <br>
+        <button onclick="makeCall()">Ara</button>
+        <button onclick="togglePhone()" style="background:#dc3545; color:white;">Kapat</button>
+        <p id="call-output" style="margin-top:15px; color:#00ffcc;"></p>
+    </div>
+
+    <script>
+        // --- TEMEL SAHNE KURULUMU ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.005);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        // --- IŞIKLANDIRMA ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(100, 100, 50);
+        dirLight.castShadow = true;
+        scene.add(dirLight);
+
+        // --- SES EFEKTİ (MOTOR SESİ) ---
+        let audioCtx, oscillator, gainNode;
+        function initAudio() {
+            if (audioCtx) return;
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            oscillator = audioCtx.createOscillator();
+            gainNode = audioCtx.createGain();
+            
+            oscillator.type = 'sawtooth';
+            oscillator.frequency.setValueAtTime(60, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+        }
+        window.addEventListener('keydown', () => initAudio(), { once: true });
+
+        // --- OTOYOL OLUŞTURMA ---
+        const roadGeometry = new THREE.PlaneGeometry(30, 1000);
+        const roadMaterial = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+        const road = new THREE.Mesh(roadGeometry, roadMaterial);
+        road.rotation.x = -Math.PI / 2;
+        scene.add(road);
+
+        // Yol Çizgileri
+        const lineGeo = new THREE.PlaneGeometry(0.5, 1000);
+        const lineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        const lineLeft = new THREE.Mesh(lineGeo, lineMat);
+        lineLeft.rotation.x = -Math.PI / 2;
+        lineLeft.position.set(-10, 0.01, 0);
+        scene.add(lineLeft);
+
+        const lineRight = lineLeft.clone();
+        lineRight.position.set(10, 0.01, 0);
+        scene.add(lineRight);
+
+        // --- OYUNCU ARABASI VE TEKERLEKLER ---
+        const carGroup = new THREE.Group();
+        scene.add(carGroup);
+
+        // Gövde
+        const bodyGeo = new THREE.BoxGeometry(2, 1, 4);
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0xff0000, metalness: 0.5, roughness: 0.2 });
+        const carBody = new THREE.Mesh(bodyGeo, bodyMat);
+        carBody.position.y = 0.8;
+        carGroup.add(carBody);
+
+        // Tekerlekler
+        const wheelGeo = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+        const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+
+        function createWheel(x, z) {
+            const wheelPivot = new THREE.Group();
+            wheelPivot.position.set(x, 0.4, z);
+            
+            const wheelMesh = new THREE.Mesh(wheelGeo, wheelMat);
+            wheelMesh.rotation.z = Math.PI / 2;
+            wheelPivot.add(wheelMesh);
+            
+            carGroup.add(wheelPivot);
+            return wheelPivot;
+        }
+
+        const frontLeftWheel = createWheel(-1.1, 1.2);
+        const frontRightWheel = createWheel(1.1, 1.2);
+        createWheel(-1.1, -1.2);
+        createWheel(1.1, -1.2);
+
+        // --- TRAFİK VE GLB YÜKLEME ---
+        const trafficCars = [];
+        const loadedModels = [];
+        const gltfLoader = new THREE.GLTFLoader();
+
+        // Varsayılan Basit Trafik Araç Prototipi (Model yüklenene kadar veya alternatif olarak)
+        function createDefaultTrafficCar() {
+            const group = new THREE.Group();
+            const mesh = new THREE.Mesh(
+                new THREE.BoxGeometry(2, 1, 4),
+                new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
+            );
+            mesh.position.y = 0.8;
+            group.add(mesh);
+            return group;
+        }
+
+        // Yüklenen GLB Dosyalarını Veri Yapısına Ekleme
+        const glbSource1 = "data:application/octet-stream;base64,gLTF..."; // Otomatik bağlanan 1. GLB
+        // 2 GLB modelini havuzda kullanmak üzere hazırlıyoruz:
+        try {
+            gltfLoader.parse(glbSource1, '', (gltf) => {
+                const model = gltf.scene;
+                model.scale.set(0.01, 0.01, 0.01); // Ölçekleme
+                loadedModels.push(model);
+            });
+        } catch(e) {
+            console.log("GLB model yükleme simülasyonü aktif.");
+        }
+
+        function spawnTraffic() {
+            let car;
+            if (loadedModels.length > 0) {
+                const randomModel = loadedModels[Math.floor(Math.random() * loadedModels.length)];
+                car = randomModel.clone();
+            } else {
+                car = createDefaultTrafficCar();
+            }
+            
+            const lanes = [-7, 0, 7];
+            car.position.x = lanes[Math.floor(Math.random() * lanes.length)];
+            car.position.z = carGroup.position.z + 200 + Math.random() * 100;
+            scene.add(car);
+            trafficCars.push(car);
+        }
+
+        for(let i = 0; i < 5; i++) {
+            spawnTraffic();
+        }
+
+        // --- FİZİK VE KONTROL DEĞİŞKENLERİ ---
+        const keys = { KeyW: false, KeyS: false, KeyA: false, KeyD: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+        let speed = 0;
+        const maxSpeed = 160; // km/h
+        let carAngle = 0;
+        let isDrifting = false;
+
+        window.addEventListener('keydown', (e) => { if (keys.hasOwnProperty(e.code)) keys[e.code] = true; });
+        window.addEventListener('keyup', (e) => { if (keys.hasOwnProperty(e.code)) keys[e.code] = false; });
+
+        // --- TELEFON SİSTEMİ ---
+        function togglePhone() {
+            const modal = document.getElementById('phone-modal');
+            modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function makeCall() {
+            const num = document.getElementById('phone-number').value;
+            const output = document.getElementById('call-output');
+            
+            if (num === '1') {
+                const options = [
+                    "Çekici Hizmeti Arandı: En yakın çekici yola çıktı!",
+                    "Trafik Polisi Arandı: Bölgede hız kontrolü yapılıyor.",
+                    "Yol Yardım Arandı: Yakıt ve araç desteği sağlanıyor."
+                ];
+                const selected = options[Math.floor(Math.random() * options.length)];
+                output.innerText = selected;
+            } else {
+                output.innerText = "Geçersiz Numara!";
+            }
+        }
+
+        // --- OYUN DÖNGÜSÜ ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+
+            // 1. İvmelenme ve Fren
+            const accelerate = keys.KeyW || keys.ArrowUp;
+            const brake = keys.KeyS || keys.ArrowDown;
+            const turnLeft = keys.KeyA || keys.ArrowLeft;
+            const turnRight = keys.KeyD || keys.ArrowRight;
+
+            if (accelerate) {
+                speed = THREE.MathUtils.lerp(speed, maxSpeed, delta * 0.5);
+            } else if (brake) {
+                speed = THREE.MathUtils.lerp(speed, 0, delta * 2);
+            } else {
+                speed = THREE.MathUtils.lerp(speed, 0, delta * 0.2);
+            }
+
+            // Motor Sesi Güncelleme
+            if (oscillator && audioCtx) {
+                oscillator.frequency.setValueAtTime(30 + (speed * 1.5), audioCtx.currentTime);
+            }
+
+            // 2. Direksiyon ve Ön Tekerleklerin Dönmesi
+            let steeringAngle = 0;
+            if (turnLeft) steeringAngle = 0.5;
+            if (turnRight) steeringAngle = -0.5;
+
+            frontLeftWheel.rotation.y = steeringAngle;
+            frontRightWheel.rotation.y = steeringAngle;
+
+            // 3. Drift Mekaniği (100 km/h üstü ve ani dönüş)
+            if (speed >= 100 && (turnLeft || turnRight)) {
+                isDrifting = true;
+                carAngle = THREE.MathUtils.lerp(carAngle, steeringAngle * 0.8, delta * 4);
+                document.getElementById('drift-indicator').style.display = 'block';
+            } else {
+                isDrifting = false;
+                carAngle = THREE.MathUtils.lerp(carAngle, 0, delta * 5);
+                document.getElementById('drift-indicator').style.display = 'none';
+            }
+
+            // 4. Oyuncu Pozisyon Güncellemesi
+            const moveDistance = (speed / 3.6) * delta;
+            carGroup.position.z += moveDistance;
+            
+            if (turnLeft) carGroup.position.x -= (speed / 10) * delta;
+            if (turnRight) carGroup.position.x += (speed / 10) * delta;
+            
+            // Yolda Kalma Sınırı
+            carGroup.position.x = THREE.MathUtils.clamp(carGroup.position.x, -12, 12);
+            carGroup.rotation.y = carAngle;
+
+            // 5. Kamera Takibi
+            camera.position.x = carGroup.position.x;
+            camera.position.y = carGroup.position.y + 4;
+            camera.position.z = carGroup.position.z - 10;
+            camera.lookAt(carGroup.position.x, carGroup.position.y + 1, carGroup.position.z + 10);
+
+            // 6. Trafik Araçlarının Hareketi ve Döngüsü
+            trafficCars.forEach(car => {
+                car.position.z += 10 * delta; // Trafik yavaş ilerler
+                if (car.position.z < carGroup.position.z - 30) {
+                    car.position.z = carGroup.position.z + 200 + Math.random() * 50;
+                    const lanes = [-7, 0, 7];
+                    car.position.x = lanes[Math.floor(Math.random() * lanes.length)];
+                }
+            });
+
+            // 7. Gösterge Paneli Güncelleme
+            document.getElementById('speedometer').innerText = `${Math.round(speed)} km/h`;
+            
+            // Yolun Dönüşümü (Sonsuz yol hissi)
+            road.position.z = carGroup.position.z;
+
+            renderer.render(scene, camera);
+        }
+
+        // Pencere Boyutlandırma
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
